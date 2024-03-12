@@ -52,20 +52,7 @@ export class BlockDB {
    *
    * @param id Genesis block ID/indep_hash
    */
-  async insertGenesis(id: string) {
-    try {
-      await this.connection
-        .insert({
-          id,
-          height: 0,
-          mined_at: Date.now(),
-          previous_block: '',
-          txs: [''],
-          extended: '',
-        })
-        .into('blocks');
-    } catch (error) {
-      console.error({ error });
-    }
+  async mineGenesisBlock() {
+    return this.mine(0, '', []);
   }
 }
