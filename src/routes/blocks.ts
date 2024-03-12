@@ -10,11 +10,11 @@ export async function blocksRoute(ctx: Router.RouterContext) {
     }
 
     const indepHash = ctx.params.indep_hash;
-    const { id, mined_at: timestamp, previous_block, txs, height } = await blockDB.getByIndepHash(indepHash);
+    const { id, mined_at, previous_block, txs, height } = await blockDB.getByIndepHash(indepHash);
 
     ctx.body = {
       indep_hash: id,
-      timestamp: Math.round(new Date(timestamp).getTime() / 1000),
+      timestamp: Math.round(new Date(mined_at).getTime() / 1000),
       previous_block,
       height,
       txs: JSON.parse(txs),
@@ -32,11 +32,11 @@ export async function blocksRouteViaHeight(ctx: Router.RouterContext) {
 
     const h = parseInt(ctx.params.height, 10) || 0;
     const block = await blockDB.getByHeight(h);
-    const { id, mined_at: timestamp, previous_block, txs, height } = block;
+    const { id, mined_at, previous_block, txs, height } = block;
 
     ctx.body = {
       indep_hash: id,
-      timestamp: Math.round(new Date(timestamp).getTime() / 1000),
+      timestamp: Math.round(new Date(mined_at).getTime() / 1000),
       previous_block,
       height,
       txs: JSON.parse(txs),
