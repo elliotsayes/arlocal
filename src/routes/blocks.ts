@@ -16,9 +16,8 @@ export async function blocksRoute(ctx: Router.RouterContext) {
       indep_hash: id,
       timestamp: Math.round(new Date(timestamp).getTime() / 1000),
       previous_block,
-      // return block height instead of current height
       height,
-      txs: txs ? txs.split(',') : [],
+      txs: JSON.parse(txs),
     };
   } catch (error) {
     console.error({ error });
@@ -40,7 +39,7 @@ export async function blocksRouteViaHeight(ctx: Router.RouterContext) {
       timestamp: Math.round(new Date(timestamp).getTime() / 1000),
       previous_block,
       height,
-      txs: txs ? txs.split(',') : [],
+      txs: JSON.parse(txs),
     };
   } catch (error) {
     console.error({ error });
