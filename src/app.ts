@@ -29,7 +29,6 @@ import {
   txPendingRoute,
 } from './routes/transaction';
 import { txAccessMiddleware, txValidateMiddleware } from './middlewares/transaction';
-import { Utils } from './utils/utils';
 import { NetworkInterface } from './faces/network';
 import Logging from './utils/logging';
 import { blocksRoute, blocksRouteViaHeight } from './routes/blocks';
@@ -92,10 +91,13 @@ export default class ArLocal {
       release: 1,
       queue_length: 0,
       peers: 1,
-      height: 0,
-      current: Utils.randomID(64),
-      blocks: 1,
       node_state_latency: 0,
+      // blocks, current, and height will be set when the app is started
+      // either from the most recent block in the database
+      // or from a new genesis block if there is an empty database
+      blocks: 0,
+      current: 'block_id',
+      height: -1,
     };
 
     this.app.context.logging = this.log;
@@ -113,12 +115,15 @@ export default class ArLocal {
     const blockDB = new BlockDB(this.connection);
     const lastBlock = await blockDB.getLastBlock();
     if (lastBlock) {
+      this.app.context.network.blocks = lastBlock.height + 1;
       this.app.context.network.current = lastBlock.id;
       this.app.context.network.height = lastBlock.height;
-      this.app.context.network.blocks = lastBlock.height + 1;
     } else {
       // save the genesis block to db
-      await blockDB.insertGenesis(this.app.context.network.current);
+      const blockId = await blockDB.mineGenesisBlock();
+      this.app.context.network.blocks = 1;
+      this.app.context.network.current = blockId;
+      this.app.context.network.height = 0;
     }
 
     this.router.get('/logs', logsRoute);
