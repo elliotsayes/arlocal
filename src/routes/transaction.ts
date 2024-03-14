@@ -267,7 +267,7 @@ export async function txPostRoute(ctx: Router.RouterContext) {
       const name = Utils.atob(tag.name);
       const value = Utils.atob(tag.value);
 
-      ctx.logging.log(name, value);
+      ctx.logging.log(`Parsed tag: ${name}=${value}`);
 
       await ctx.connection
         .insert({
