@@ -134,14 +134,13 @@ export async function txPostRoute(ctx: Router.RouterContext) {
       return;
     }
 
-    ctx.logging.log('post', data);
-
     let bundleFormat = '';
     let bundleVersion = '';
-
+    ctx.logging.log('posted tx', data);
     for (const tag of data.tags) {
       const name = Utils.atob(tag.name);
       const value = Utils.atob(tag.value);
+      ctx.logging.log(`Parsed tag: ${name}=${value}`);
       if (name === 'Bundle-Format') bundleFormat = value;
       if (name === 'Bundle-Version') bundleVersion = value;
     }
@@ -266,8 +265,6 @@ export async function txPostRoute(ctx: Router.RouterContext) {
     for (const tag of data.tags) {
       const name = Utils.atob(tag.name);
       const value = Utils.atob(tag.value);
-
-      ctx.logging.log(`Parsed tag: ${name}=${value}`);
 
       await ctx.connection
         .insert({
