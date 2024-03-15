@@ -136,7 +136,10 @@ export async function txPostRoute(ctx: Router.RouterContext) {
     const wallet = await walletDB.getWallet(owner);
     const calculatedReward = Math.round((+(tx.data_size || '0') / 1000) * 65595508);
 
-    if (!wallet || wallet.balance < calculatedReward) {
+    if (
+      !tx.bundledIn &&
+      (!wallet || wallet.balance < calculatedReward)
+    ) {
       ctx.status = 410;
       ctx.body = { code: 410, msg: "You don't have enough tokens" };
       return;
@@ -222,7 +225,7 @@ export async function txPostRoute(ctx: Router.RouterContext) {
       }
     }
 
-    // BALANCE UPDATES
+    // AR Transfers
     if (tx?.target && tx?.quantity) {
       let targetWallet = await walletDB.getWallet(tx.target);
       if (!targetWallet) {
