@@ -1,5 +1,4 @@
 import { TransactionType } from '../faces/transaction';
-import { Chunk } from '../faces/chunk';
 import { Tag } from '../faces/arweave';
 import { Next } from 'koa';
 import Router from 'koa-router';
@@ -9,7 +8,6 @@ import {
   bufferTob64Url,
   fromB64Url,
   sha256B64Url,
-  sha256Hex,
   deepHash,
   stringToBuffer,
 } from '../utils/encoding';
@@ -41,7 +39,6 @@ export async function txAccessMiddleware(ctx: Router.RouterContext, next: Next) 
     const txid = path.length > 1 ? path[1] : '';
 
     const metadata: TransactionType = await transactionDB.getById(txid);
-    ctx.logging.log(metadata);
 
     if (!metadata) {
       ctx.status = 404;
@@ -240,23 +237,9 @@ export async function txValidateMiddleware(ctx: Router.RouterContext, next: Next
       }
 
       // verify data_size matches data or comb of all chunks
-      if (body.data !== '') {
+      if (!!body.data) {
         if (fromB64Url(body.data).byteLength !== parseInt(body.data_size, 10)) {
           validationErrors.push(`"data_size" is invalid, should match transaction "data" size`);
-        }
-      } else {
-        let chunks: Chunk[] =
-          (await ctx.connection.select('*').from('chunks').where('data_root', body.data_root)) || [];
-
-        if (chunks.length) {
-          // filter duplicate data chunks
-          const chunksHash = Array.from(new Set(chunks.map((c) => sha256Hex(c.chunk))));
-          chunks = chunksHash.map((h) => chunks.find((c) => sha256Hex(c.chunk) === h));
-          chunks.sort((a, b) => a.offset - b.offset);
-
-          if (concatBuffers(chunks.map((c) => fromB64Url(c.chunk))).byteLength !== parseInt(body.data_size, 10)) {
-            validationErrors.push(`"data_size" is invalid, should match transaction chunks combined size`);
-          }
         }
       }
     }

@@ -114,7 +114,7 @@ export async function mineRoute(ctx: Router.RouterContext) {
           // filter duplicate data chunks
           const chunksHash = Array.from(new Set(chunks.map((c) => sha256Hex(c.chunk))));
           chunks = chunksHash.map((h) => chunks.find((c) => sha256Hex(c.chunk) === h));
-          chunks.sort((a, b) => a.offset - b.offset);
+          ChunkDB.sort(chunks);
           // parse chunk(s) to buffer
           const chunk = chunks.map((ch) => Buffer.from(b64UrlToBuffer(ch.chunk)));
           const buffer = Buffer.concat(chunk);

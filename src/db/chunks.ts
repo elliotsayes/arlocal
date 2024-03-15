@@ -9,7 +9,15 @@ export class ChunkDB {
     this.connection = connection;
   }
 
-  async create({ chunk, data_root, data_size, offset, data_path }: Chunk) {
+  async create({
+    chunk,
+    data_root,
+    data_size,
+    chunk_size,
+    local_offset,
+    global_offset,
+    data_path
+  }: Chunk) {
     try {
       const id = Utils.randomID(64);
 
@@ -19,7 +27,9 @@ export class ChunkDB {
           chunk,
           data_root,
           data_size,
-          offset,
+          chunk_size,
+          local_offset,
+          global_offset,
           data_path,
         })
         .into('chunks');
@@ -30,9 +40,39 @@ export class ChunkDB {
     }
   }
 
-  async getByRootAndSize(dataRoot: string, dataSize: number) {
+  async update(id: string, {
+    chunk,
+    data_root,
+    data_size,
+    chunk_size,
+    local_offset,
+    global_offset,
+    data_path
+  }: Partial<Chunk>) {
     try {
-      return (await this.connection('chunks').where({ data_root: dataRoot, data_size: dataSize }))[0];
+      await this.connection('chunks').where({ id })
+        .update({
+          chunk,
+          data_root,
+          data_size,
+          chunk_size,
+          local_offset,
+          global_offset,
+          data_path,
+        });
+
+      return id;
+    } catch (error) {
+      console.error({ error });
+    }
+  }
+
+  async getByRootAndLocalOffset(dataRoot: string, localOffset: BigInt) {
+    try {
+      return (await this.connection('chunks').where({
+        data_root: dataRoot,
+        local_offset: localOffset.toString(),
+      }))[0];
     } catch (error) {
       console.error({ error });
     }
@@ -46,9 +86,11 @@ export class ChunkDB {
     }
   }
 
-  async getByOffset(offset: number) {
+  async getByGlobalOffset(global_offset: BigInt) {
     try {
-      return (await this.connection('chunks').where({ offset }))[0];
+      return (await this.connection('chunks').where({
+        global_offset: global_offset.toString(),
+      }))[0];
     } catch (error) {
       console.error({ error });
     }
@@ -56,15 +98,15 @@ export class ChunkDB {
 
   async getLowerOffset(offset: number) {
     try {
-      return (await this.connection('chunks').where('offset', '<', offset).orderBy('offset', 'desc'))[0];
+      return (await this.connection('chunks').where('offset', '<', offset).orderBy('global_offset', 'desc'))[0];
     } catch (error) {
       console.error({ error });
     }
   }
 
-  async getLastChunkOffset(): Promise<number> {
+  async getCurrentGlobalOffset(): Promise<number> {
     try {
-      const chunk = (await this.connection('chunks').orderBy('offset', 'desc'))[0];
+      const chunk = (await this.connection('chunks').orderBy('global_offset', 'desc'))[0];
       if (!chunk || !chunk.offset) {
         return 0;
       }
@@ -73,5 +115,62 @@ export class ChunkDB {
       console.log('I crashed');
       console.error({ error });
     }
+  }
+
+  /**
+   * An algorithm for finding and removing orphaned chunk.
+   * (Could happen if a data item is uploaded multiple times with different size chunks.)
+   * @param data_root string
+   */
+  async deleteOrphanedChunks(data_root: string) : Promise<void> {
+    const chunks = await this.getRoot(data_root)
+    const data_size = BigInt(chunks[0].data_size)
+    const maxOffset = chunks.map(x => BigInt(x.global_offset)).reduce(
+      (acc, x) => {
+        return x > acc ? x : acc
+      },
+      BigInt(0),
+    )
+
+    console.log('data_root', data_root)
+    console.log('chunks')
+    console.log('maxOffset', maxOffset)
+    
+    const allChunkIds = chunks.map(x => x.id)
+    const goodChunkIds = []
+
+    let currentOffset = maxOffset
+    let currentChunk;
+    do {
+      console.log('currentOffset', currentOffset)
+      currentChunk = chunks.find(x => x.global_offset === currentOffset.toString())
+      console.log('found?', !!currentChunk)
+      goodChunkIds.push(currentChunk.id)
+      const chunk_size = BigInt(currentChunk.chunk_size)
+      const newOffset = currentOffset - chunk_size
+      currentOffset = newOffset
+    } while (currentOffset > maxOffset - data_size)
+
+    console.log('allChunkIds', allChunkIds)
+    console.log('goodChunkIds', goodChunkIds)
+
+    const deleteTransactions = []
+    for (const chunkId of allChunkIds) {
+      if (!goodChunkIds.includes(chunkId)) {
+        deleteTransactions.push(
+          this.connection('chunks').where({ id: chunkId }).del()
+        )
+      }
+    }
+    await Promise.all(deleteTransactions)
+  }
+
+  static sort(chunks: Chunk[]) : void {
+    chunks.sort((a, b) => {
+      const bigIntA = BigInt(a.global_offset)
+      const bigIntB = BigInt(b.global_offset)
+      if (bigIntA == bigIntB) return 0
+      return bigIntA > bigIntB ? 1 : -1
+    })
   }
 }

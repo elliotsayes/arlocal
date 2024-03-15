@@ -136,7 +136,7 @@ export async function dataRoute(ctx: Router.RouterContext) {
       // filter duplicate data chunks
       const chunksHash = Array.from(new Set(chunks.map((c) => sha256Hex(c.chunk))));
       chunks = chunksHash.map((h) => chunks.find((c) => sha256Hex(c.chunk) === h));
-      chunks.sort((a, b) => a.offset - b.offset);
+      ChunkDB.sort(chunks);
 
       const chunk = chunks.map((ch) => Buffer.from(b64UrlToBuffer(ch.chunk)));
 
