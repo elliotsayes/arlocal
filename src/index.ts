@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import minimist from 'minimist';
-import { join } from 'path';
+import { resolve } from 'path';
 import ArLocal from './app';
 import { appData } from './utils/appdata';
 
@@ -14,7 +14,7 @@ const fails = argv.fails || 0;
 const dbPath = argv.dbpath
   ? argv.dbpath === ':memory:'
     ? argv.dbpath
-    : join(process.cwd(), argv.dbpath)
+    : resolve(process.cwd(), argv.dbpath)
   : appData('arlocal', '.db');
 
 let app: ArLocal;
