@@ -1,3 +1,4 @@
+import Arweave from 'arweave';
 import Router from 'koa-router';
 import mime from 'mime';
 import { formatTransaction, TransactionDB } from '../db/transaction';
@@ -10,8 +11,6 @@ import { b64UrlToBuffer, bufferTob64Url, hash } from '../utils/encoding';
 import { ChunkDB } from '../db/chunks';
 import { Next } from 'koa';
 import Transaction from 'arweave/node/lib/transaction';
-import { generateTransactionChunks } from '../utils/merkle';
-import { Chunk } from '../faces/chunk';
 
 export const pathRegex = /^\/?([a-z0-9-_]{43})/i;
 
@@ -95,19 +94,28 @@ export async function txOffsetRoute(ctx: Router.RouterContext) {
     const transaction = path.length > 1 ? path[1] : '';
 
     const metadata: Transaction = await transactionDB.getById(transaction);
-    ctx.logging.log(metadata);
 
     if (!metadata) {
       ctx.status = 404;
       ctx.body = { status: 404, error: 'Not Found' };
       return;
     }
-    const chunk = await chunkDB.getByRootAndSize(metadata.data_root, +metadata.data_size);
+
+    const dataSize = BigInt(metadata.data_size)
+
+    const chunk = await chunkDB.getByRootAndLocalOffset(metadata.data_root, dataSize);
+
+    if (!chunk) {
+      ctx.status = 404;
+      ctx.body = { status: 404, error: 'Not Found' };
+      return;
+    }
 
     ctx.status = 200;
-    ctx.type = 'text/plain'; // TODO: updated this in arweave gateway to app/json
-
-    ctx.body = { offset: `${+chunk.offset + +metadata.data_size - 1}`, size: `${metadata.data_size}` };
+    ctx.body = {
+      offset: chunk.global_offset,
+      size: dataSize.toString(),
+    };
   } catch (error) {
     console.error({ error });
   }
@@ -122,11 +130,11 @@ export async function txPostRoute(ctx: Router.RouterContext) {
 
       oldDbPath = ctx.dbPath;
     }
-    const data = ctx.request.body as unknown as TransactionType;
-    const owner = bufferTob64Url(await hash(b64UrlToBuffer(data.owner)));
+    const tx = ctx.request.body as unknown as TransactionType;
+    const owner = bufferTob64Url(await hash(b64UrlToBuffer(tx.owner)));
 
     const wallet = await walletDB.getWallet(owner);
-    const calculatedReward = Math.round((+(data.data_size || '0') / 1000) * 65595508);
+    const calculatedReward = Math.round((+(tx.data_size || '0') / 1000) * 65595508);
 
     if (!wallet || wallet.balance < calculatedReward) {
       ctx.status = 410;
@@ -136,8 +144,8 @@ export async function txPostRoute(ctx: Router.RouterContext) {
 
     let bundleFormat = '';
     let bundleVersion = '';
-    ctx.logging.log('posted tx', data);
-    for (const tag of data.tags) {
+    ctx.logging.log('posted tx', tx);
+    for (const tag of tx.tags) {
       const name = Utils.atob(tag.name);
       const value = Utils.atob(tag.value);
       ctx.logging.log(`Parsed tag: ${name}=${value}`);
@@ -165,7 +173,7 @@ export async function txPostRoute(ctx: Router.RouterContext) {
               ...ctx.request,
               body: {
                 id: bundle.get(i).id,
-                bundledIn: data.id,
+                bundledIn: tx.id,
                 ...item.toJSON(),
               },
             },
@@ -174,69 +182,56 @@ export async function txPostRoute(ctx: Router.RouterContext) {
         }
       };
 
-      if (data.data) {
-        const buffer = Buffer.from(data.data, 'base64');
+      if (tx.data) {
+        const buffer = Buffer.from(tx.data, 'base64');
         await createTxsFromItems(buffer);
       } else {
         (async () => {
-          let lastOffset = 0;
-          let chunks: Chunk[];
-          while (+data.data_size !== lastOffset) {
-            chunks = await chunkDB.getRoot(data.data_root);
-            const firstChunkOffset = +chunks[0]?.offset || 0;
-            const lastChunk = chunks[chunks.length - 1];
-            const lastChunkLength = lastChunk ? b64UrlToBuffer(lastChunk.chunk).byteLength : 0;
-            lastOffset = +chunks[chunks.length - 1]?.offset - firstChunkOffset + lastChunkLength || 0;
-          }
-
-          const chunk = chunks.map((ch) => Buffer.from(b64UrlToBuffer(ch.chunk)));
-
-          const buffer = Buffer.concat(chunk);
+          const chunks = await chunkDB.getRoot(tx.data_root);
+          ChunkDB.sort(chunks)
+          const buffers = chunks.map(x => b64UrlToBuffer(x.chunk));
+          const buffer = Buffer.concat(buffers);
           await createTxsFromItems(buffer);
         })();
       }
     }
 
-    // for tx without chunk
-    // create the chunk, to prevent offset error on tx/:offset endpoint
-    if (data.data && !ctx.txInBundle) {
-      // create tx chunks if not exists
-      const chunk = await chunkDB.getByRootAndSize(data.data_root, +data.data_size);
-
-      if (!chunk) {
-        // get data from data db
-        const dataBuf = b64UrlToBuffer(data.data);
-
-        const nChunk = await generateTransactionChunks(dataBuf);
-        // make chunks offsets unique
-        const lastOffset = await chunkDB.getLastChunkOffset();
-
-        // create all chunks
-        const asyncOps = nChunk.chunks.map((_chunk, idx) => {
-          const proof = nChunk.proofs[idx];
-          return chunkDB.create({
-            chunk: bufferTob64Url(dataBuf.slice(_chunk.minByteRange, _chunk.maxByteRange)),
-            data_size: +data.data_size,
-            data_path: bufferTob64Url(proof.proof),
-            data_root: bufferTob64Url(nChunk.data_root),
-            offset: proof.offset + lastOffset,
-          });
-        });
-
-        await Promise.all(asyncOps);
+    // if this tx is not part of a bundle,
+    // and if there is no data in this tx,
+    // but the size of the data is defined
+    if (!ctx.txInBundle && !tx.data && !!tx.data_size) {
+      // then we expect the client to make chunk uploads.
+      // check to see if this object has already been chunk uploaded
+      const chunks = await chunkDB.getRoot(tx.data_root)
+      if (chunks.length === 0) {
+        // it has never been uploaded before
+        // so we will reserve space in the global chunk memory.
+        const dataSize = BigInt(tx.data_size)
+        const localOffset = dataSize - BigInt(1)
+        const currentGlobalOffset = BigInt(await chunkDB.getCurrentGlobalOffset())
+        const newGlobalOffset = currentGlobalOffset + dataSize - BigInt(1)
+        await chunkDB.create({
+          chunk: '',
+          data_root: tx.data_root,
+          data_size: tx.data_size,
+          chunk_size: '0',
+          local_offset: localOffset.toString(),
+          global_offset: newGlobalOffset.toString(),
+          data_path: '',
+        })
       }
     }
 
     // BALANCE UPDATES
-    if (data?.target && data?.quantity) {
-      let targetWallet = await walletDB.getWallet(data.target);
+    if (tx?.target && tx?.quantity) {
+      let targetWallet = await walletDB.getWallet(tx.target);
       if (!targetWallet) {
         await walletDB.addWallet({
-          address: data?.target,
+          address: tx?.target,
           balance: 0,
         });
 
-        targetWallet = await walletDB.getWallet(data.target);
+        targetWallet = await walletDB.getWallet(tx.target);
       }
 
       if (!wallet || !targetWallet) {
@@ -244,25 +239,25 @@ export async function txPostRoute(ctx: Router.RouterContext) {
         ctx.body = { status: 404, error: `Wallet not found` };
         return;
       }
-      if (wallet?.balance < +data.quantity + +data.reward) {
+      if (wallet?.balance < +tx.quantity + +tx.reward) {
         ctx.status = 403;
-        ctx.body = { status: 403, error: `you don't have enough funds to send ${data.quantity}` };
+        ctx.body = { status: 403, error: `you don't have enough funds to send ${tx.quantity}` };
         return;
       }
-      await walletDB.incrementBalance(data.target, +data.quantity);
-      await walletDB.decrementBalance(wallet.address, +data.quantity);
+      await walletDB.incrementBalance(tx.target, +tx.quantity);
+      await walletDB.decrementBalance(wallet.address, +tx.quantity);
     }
 
-    await dataDB.insert({ txid: data.id, data: data.data });
+    await dataDB.insert({ txid: tx.id, data: tx.data });
 
-    const tx = formatTransaction(data);
-    tx.created_at = new Date().toISOString();
-    tx.height = ctx.network.blocks;
+    const txToInsert = formatTransaction(tx);
+    txToInsert.created_at = new Date().toISOString();
+    txToInsert.height = ctx.network.blocks;
 
-    await ctx.connection.insert(tx).into('transactions');
+    await ctx.connection.insert(txToInsert).into('transactions');
 
     let index = 0;
-    for (const tag of data.tags) {
+    for (const tag of tx.tags) {
       const name = Utils.atob(tag.name);
       const value = Utils.atob(tag.value);
 
@@ -278,13 +273,13 @@ export async function txPostRoute(ctx: Router.RouterContext) {
       index++;
     }
 
-    // Don't charge wallet for arbundles Data-Items
+    // Don't charge wallet for ANS-104 bundled data items
     // @ts-ignore
     if (!ctx.txInBundle) {
-      const fee = +data.reward > calculatedReward ? +data.reward : calculatedReward;
+      const fee = +tx.reward > calculatedReward ? +tx.reward : calculatedReward;
       await walletDB.decrementBalance(owner, +fee);
     }
-    ctx.body = data;
+    ctx.body = tx;
   } catch (error) {
     console.error({ error });
   }
@@ -414,11 +409,13 @@ export async function txRawDataRoute(ctx: Router.RouterContext) {
     if (
       !transactionDB ||
       !dataDB ||
+      !chunkDB ||
       oldDbPath !== ctx.dbPath ||
       connectionSettings !== ctx.connection.client.connectionSettings.filename
     ) {
       transactionDB = new TransactionDB(ctx.connection);
       dataDB = new DataDB(ctx.dbPath);
+      chunkDB = new ChunkDB(ctx.connection)
       oldDbPath = ctx.dbPath;
       connectionSettings = ctx.connection.client.connectionSettings.filename;
     }
@@ -435,21 +432,34 @@ export async function txRawDataRoute(ctx: Router.RouterContext) {
     }
 
     // Check for the data_size
-    const size = parseInt(metadata.data_size, 10);
-
-    if (size > 12000000) {
+    if (BigInt(metadata.data_size) > 10_000_000) {
       ctx.status = 400;
-      ctx.body = 'tx_data_too_big';
+      ctx.body = { problem: 'data is too big', solution: 'use the `/chunk/:offset` routing to download bigger chunks' };
       return;
     }
 
     // Find the transaction data
-    const data = await dataDB.findOne(txid);
+    const { data } = await dataDB.findOne(txid);
 
-    // Return the base64 data to the user
+    let buffer: Buffer
+    if (data.length === 0) {
+      // then we need fetch the chunks
+      const chunks = await chunkDB.getRoot(metadata.data_root)
+      ChunkDB.sort(chunks)
+      buffer = Buffer.concat(
+        chunks.map(({ chunk: chunkData }) => {
+          return Buffer.from(Arweave.utils.b64UrlToBuffer(chunkData))
+        })
+      )
+    } else {
+      buffer = Buffer.from(Arweave.utils.b64UrlToBuffer(data))
+    }
+
     ctx.status = 200;
-    ctx.body = data.data;
+    ctx.type = Utils.tagValue(metadata.tags, 'Content-Type') || 'application/octet-stream'
+    ctx.body = buffer;
   } catch (error) {
+    ctx.logging.error(error)
     ctx.status = 500;
     ctx.body = { error: error.message };
   }

@@ -77,8 +77,10 @@ export async function up(knex: Knex) {
       table.string('id', 64).notNullable();
       table.text('chunk').notNullable();
       table.string('data_root').notNullable();
-      table.integer('data_size').notNullable();
-      table.integer('offset').notNullable();
+      table.string('data_size').notNullable();
+      table.string('chunk_size').notNullable();
+      table.string('local_offset').notNullable();
+      table.string('global_offset').notNullable();
       table.string('data_path').notNullable();
       table.timestamp('created_at').defaultTo(knex.fn.now());
 
