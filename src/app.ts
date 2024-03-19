@@ -28,7 +28,7 @@ import {
   txDataRoute,
   txPendingRoute,
 } from './routes/transaction';
-import { txAccessMiddleware, txValidateMiddleware } from './middlewares/transaction';
+import { /*txAccessMiddleware,*/ txValidateMiddleware } from './middlewares/transaction';
 import { NetworkInterface } from './faces/network';
 import Logging from './utils/logging';
 import { blocksRoute, blocksRouteViaHeight } from './routes/blocks';
@@ -143,7 +143,7 @@ export default class ArLocal {
     this.router.get('/tx/pending', txPendingRoute);
 
     // tx filter endpoint to restrict ans-104 txs
-    this.router.get(/^\/tx(?:\/|$)/, txAccessMiddleware);
+    // this.router.get(/^\/tx(?:\/|$)/, txAccessMiddleware);
 
     this.router.get('/tx/:txid/offset', txOffsetRoute);
     this.router.get('/tx/:txid/status', txStatusRoute);
