@@ -145,7 +145,6 @@ export class ChunkDB {
       console.log('currentOffset', currentOffset)
       currentChunk = chunks.find(x => x.global_offset === currentOffset.toString())
       console.log('found?', !!currentChunk)
-      if (!currentChunk) break;
       goodChunkIds.push(currentChunk.id)
       const chunk_size = BigInt(currentChunk.chunk_size)
       const newOffset = currentOffset - chunk_size
