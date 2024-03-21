@@ -96,21 +96,17 @@ export class ChunkDB {
     }
   }
 
-  async getLowerOffset(offset: number) {
+  async getCurrentGlobalOffset(): Promise<bigint> {
     try {
-      return (await this.connection('chunks').where('offset', '<', offset).orderBy('global_offset', 'desc'))[0];
-    } catch (error) {
-      console.error({ error });
-    }
-  }
-
-  async getCurrentGlobalOffset(): Promise<number> {
-    try {
-      const chunk = (await this.connection('chunks').orderBy('global_offset', 'desc'))[0];
-      if (!chunk || !chunk.offset) {
-        return 0;
+      const allChunks = await this.connection('chunks');
+      let globalOffset = BigInt(0)
+      for (const chunk of allChunks) {
+        const x = BigInt(chunk.global_offset)
+        if (x > globalOffset) {
+          globalOffset = x;
+        }
       }
-      return chunk.offset;
+      return globalOffset;
     } catch (error) {
       console.log('I crashed');
       console.error({ error });
@@ -123,6 +119,7 @@ export class ChunkDB {
    * @param data_root string
    */
   async deleteOrphanedChunks(data_root: string) : Promise<void> {
+    console.log(`begin: deleteOrphanedChunks('${data_root}')`)
     const chunks = await this.getRoot(data_root)
     const data_size = BigInt(chunks[0].data_size)
     const maxOffset = chunks.map(x => BigInt(x.global_offset)).reduce(
@@ -131,9 +128,6 @@ export class ChunkDB {
       },
       BigInt(0),
     )
-
-    console.log('data_root', data_root)
-    console.log('chunks')
     console.log('maxOffset', maxOffset)
     
     const allChunkIds = chunks.map(x => x.id)
@@ -144,7 +138,9 @@ export class ChunkDB {
     do {
       console.log('currentOffset', currentOffset)
       currentChunk = chunks.find(x => x.global_offset === currentOffset.toString())
-      console.log('found?', !!currentChunk)
+      if (!currentChunk) {
+        throw new Error('database error: chunk not found')
+      }
       goodChunkIds.push(currentChunk.id)
       const chunk_size = BigInt(currentChunk.chunk_size)
       const newOffset = currentOffset - chunk_size
@@ -163,6 +159,7 @@ export class ChunkDB {
       }
     }
     await Promise.all(deleteTransactions)
+    console.log(`done: deleteOrphanedChunks('${data_root}')`)
   }
 
   static sort(chunks: Chunk[]) : void {

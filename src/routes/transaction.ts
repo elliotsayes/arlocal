@@ -211,7 +211,7 @@ export async function txPostRoute(ctx: Router.RouterContext) {
         // so we will reserve space in the global chunk memory.
         const dataSize = BigInt(tx.data_size)
         const localOffset = dataSize - BigInt(1)
-        const currentGlobalOffset = BigInt(await chunkDB.getCurrentGlobalOffset())
+        const currentGlobalOffset = await chunkDB.getCurrentGlobalOffset()
         const newGlobalOffset = currentGlobalOffset + dataSize - BigInt(1)
         await chunkDB.create({
           chunk: '',

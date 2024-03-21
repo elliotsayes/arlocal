@@ -60,7 +60,7 @@ export async function postChunkRoute(ctx: Router.RouterContext) {
         }
       }
       if (shouldPersist) {
-        const global_offset = BigInt(placeholderChunk.global_offset) - data_size + chunk_size
+        const global_offset = BigInt(placeholderChunk.global_offset) + BigInt(1) - data_size + local_offset
         await chunkDB.create({
           chunk: chunkData,
           data_root,
